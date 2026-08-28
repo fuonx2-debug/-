@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>美日欧国债与汇率监控看板</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        body {
+            background-color: #f3f4f6;
+            padding: 24px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: #111827;
+        }
+        .error-alert {
+            background-color: #fee2e2;
+            color: #b91c1c;
+            padding:12px 16px;
+            border-radius:8px;
+            margin-bottom:16px;
+            display:none;
+        }
+        .card-row {
+            display: grid;
+            grid-template-columns: repeat(4,1fr);
+            gap:16px;
+            margin-bottom:24px;
+        }
+        .stat-card {
+            background:#ffffff;
+            padding:18px;
+            border-radius:12px;
+            box-shadow:0 1px 3px rgba(0,0,0,0.1);
+        }
+        .stat-card .title {
+            font-size:14px;
+            color:#6b7280;
+            margin-bottom:6px;
+        }
+        .stat-card .value {
+            font-size:22px;
+            font-weight:bold;
+            color:#111827;
+        }
+        .stat-card .date {
+            font-size:12px;
+            color:#9ca3af;
+            margin-top:4px;
+        }
+        .chart-wrap {
+            background:#ffffff;
+            padding:20px;
+            border-radius:12px;
+            box-shadow:0 1px 3px rgba(0,0,0,0.1);
+        }
+        canvas {
+            width:100% !important;
+            height:520px !important;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>美日欧国债 & 汇率监控看板</h1>
+    <div class="error-alert" id="errorBox"></div>
+
+    <div class="card-row">
+        <div class="stat-card">
+            <div class="title">美10年期国债收益率</div>
+            <div class="value" id="us10yVal">--</div>
+            <div class="date" id="us10yDate"></div>
+        </div>
+        <div class="stat-card">
+            <div class="title">日10年期国债收益率</div>
+            <div class="value" id="jp10yVal">--</div>
+            <div class="date" id="jp10yDate"></div>
+        </div>
+        <div class="stat-card">
+            <div class="title">EUR/USD</div>
+            <div class="value" id="eurusdVal">--</div>
+            <div class="date" id="eurusdDate"></div>
+        </div>
+        <div class="stat-card">
+            <div class="title">USD/JPY</div>
+            <div class="value" id="usdjpyVal">--</div>
+            <div class="date" id="usdjpyDate"></div>
+        </div>
+    </div>
+
+    <div class="chart-wrap">
+        <canvas id="mainChart"></canvas>
+    </div>
+</div>
+
+<script>
+const errorBox = document.getElementById('errorBox');
+function showError(msg){
+    errorBox.innerText = msg;
+    errorBox.style.display = 'block';
+}
+
+async function load(){
+    let resp;
+    try{
+        resp = await fetch('data.json');
+    }catch(e){
+        showError('读取data.json失败：'+e.message);
+        return;
+    }
+    if(!resp.ok){
+        showError(`HTTP ${resp.status}，无法加载data.json`);
+        return;
+    }
+    let data;
+    try{
+        data = await resp.json();
+    }catch(e){
+        showError('JSON解析失败：'+e.message);
+        return;
+    }
+
+    // 适配实际data.json结构：按品种分组，每个品种含latest和history
+    const keys = ['us10y_bond','jp10y_bond','eurusd','usdjpy'];
+    for(const k of keys){
+        if(!data[k] || !data[k].latest || !data[k].history){
+            showError(`data.json缺少字段：${k}.latest 或 ${k}.history`);
+            return;
+        }
+    }
+
+    // 填充顶部数值卡片
+    document.getElementById('us10yVal').innerText = data.us10y_bond.latest.value;
+    document.getElementById('us10yDate').innerText = data.us10y_bond.latest.date;
+
+    document.getElementById('jp10yVal').innerText = data.jp10y_bond.latest.value;
+    document.getElementById('jp10yDate').innerText = data.jp10y_bond.latest.date;
+
+    document.getElementById('eurusdVal').innerText = data.eurusd.latest.value;
+    document.getElementById('eurusdDate').innerText = data.eurusd.latest.date;
+
+    document.getElementById('usdjpyVal').innerText = data.usdjpy.latest.value;
+    document.getElementById('usdjpyDate').innerText = data.usdjpy.latest.date;
+
+    // 4条曲线配置
+    const datasetsRaw = [
+        {key:'us10y_bond', label:'美10Y国债(%)', color:'#dc2626', yAxisID:'y'},
+        {key:'jp10y_bond', label:'日10Y国债(%)', color:'#2563eb', yAxisID:'y'},
+        {key:'eurusd', label:'EUR/USD', color:'#059669', yAxisID:'y1'},
+        {key:'usdjpy', label:'USD/JPY', color:'#9333ea', yAxisID:'y2'},
+    ];
+
+    // 收集全部日期并排序
+    const allDateSet = new Set();
+    datasetsRaw.forEach(d=>{
+        data[d.key].history.forEach(p=>allDateSet.add(p.date));
+    })
+    const labels = Array.from(allDateSet).sort();
+
+    const datasets = datasetsRaw.map(def=>{
+        const src = data[def.key].history;
+        const mapDate = new Map();
+        src.forEach(p=>mapDate.set(p.date, p.value));
+        const dataPoints = labels.map(dt=>mapDate.has(dt)?mapDate.get(dt):null);
+        return {
+            label: def.label,
+            data: dataPoints,
+            borderColor: def.color,
+            backgroundColor: def.color+'22',
+            borderWidth:2,
+            pointRadius:0,
+            spanGaps:true,
+            yAxisID: def.yAxisID,
+            tension:0.2
+        }
+    })
+
+    const ctx = document.getElementById('mainChart').getContext('2d');
+    new Chart(ctx,{
+        type:'line',
+        data:{labels, datasets},
+        options:{
+            responsive:true,
+            maintainAspectRatio:false,
+            interaction:{mode:'index', intersect:false},
+            plugins:{
+                legend:{position:'top'},
+                tooltip:{
+                    callbacks:{
+                        title:(items)=>labels[items[0].dataIndex]
+                    }
+                }
+            },
+            scales:{
+                y:{
+                    type:'linear',
+                    display:true,
+                    position:'left',
+                    title:{display:true, text:'国债收益率(%)'}
+                },
+                y1:{
+                    type:'linear',
+                    display:true,
+                    position:'right',
+                    title:{display:true, text:'EUR/USD'},
+                    grid:{drawOnChartArea:false}
+                },
+                y2:{
+                    type:'linear',
+                    display:true,
+                    position:'right',
+                    offset:true,
+                    title:{display:true, text:'USD/JPY'},
+                    grid:{drawOnChartArea:false}
+                },
+                x:{
+                    title:{display:true, text:'日期'}
+                }
+            }
+        }
+    })
+}
+
+window.onload = load;
+</script>
+</body>
+</html>
