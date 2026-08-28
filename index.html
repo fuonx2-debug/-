@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>美日国债 & 汇率监控看板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui}
+body{background:#f4f7fa;padding:20px;max-width:1200px;margin:0 auto}
+h1{text-align:center;margin-bottom:24px;color:#222}
+.card{background:#fff;border-radius:12px;padding:18px;margin-bottom:20px;box-shadow:0 2px 10px #00000014}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:768px){.grid{grid-template-columns:1fr}}
+.info-item{padding:10px 0;font-size:16px}
+.label{color:#666}
+.val{font-weight:bold;font-size:18px;margin-left:8px}
+canvas{width:100%!important;height:320px!important}
+</style>
+</head>
+<body>
+<h1>利率汇率监控看板</h1>
+
+<div class="grid">
+<div class="card">
+    <h3>最新数据</h3>
+    <div id="infoBox"></div>
+</div>
+<div class="card">
+    <h3>美10年期国债收益率</h3>
+    <canvas id="chartUsBond"></canvas>
+</div>
+<div class="card">
+    <h3>日10年期国债收益率</h3>
+    <canvas id="chartJpBond"></canvas>
+</div>
+<div class="card">
+    <h3>美元兑日元汇率</h3>
+    <canvas id="chartUsdJpy"></canvas>
+</div>
+</div>
+
+<script>
+let dataCache=null;
+async function loadData(){
+    const res=await fetch("./data.json");
+    dataCache=await res.json();
+    renderInfo();
+    renderCharts();
+}
+
+function renderInfo(){
+    const box=document.getElementById("infoBox");
+    const items=[
+        ["美10Y国债",dataCache.us10y_bond.latest],
+        ["日10Y国债",dataCache.jp10y_bond.latest],
+        ["USDJPY",dataCache.usdjpy.latest]
+    ]
+    let html="";
+    for(let [title,d] of items){
+        html+=`<div class="info-item"><span class="label">${title}：</span><span class="val">${d.value}</span><span style="color:#888;font-size:13px;margin-left:10px">${d.date}</span></div>`
+    }
+    box.innerHTML=html;
+}
+
+function makeChart(canvasId,historyData){
+    const ctx=document.getElementById(canvasId).getContext("2d");
+    const labels=historyData.map(i=>i.date);
+    const values=historyData.map(i=>Number(i.value));
+    return new Chart(ctx,{
+        type:"line",
+        data:{labels:labels,datasets:[{label:"数值",data:values,borderColor:"#2563eb",fill:false,tension:0.1}]},
+        options:{responsive:true,maintainAspectRatio:false}
+    })
+}
+
+function renderCharts(){
+    makeChart("chartUsBond",dataCache.us10y_bond.history);
+    makeChart("chartJpBond",dataCache.jp10y_bond.history);
+    makeChart("chartUsdJpy",dataCache.usdjpy.history);
+}
+
+loadData().catch(e=>{
+    document.body.innerHTML+="<div style='color:red;text-align:center;margin-top:40px'>读取数据失败，请确认Action已经运行
